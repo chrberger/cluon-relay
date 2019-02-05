@@ -28,19 +28,57 @@ int32_t main(int32_t argc, char **argv) {
        || (0 == commandlineArguments.count("cid-to"))
        || ( (1 == commandlineArguments.count("cid-from")) && (1 == commandlineArguments.count("cid-to")) 
           && (commandlineArguments["cid-from"] == commandlineArguments["cid-to"]) )
+       || ( (1 == commandlineArguments.count("keep")) && (1 == commandlineArguments.count("drop")) )
        ) {
         std::cerr << argv[0] << " relays Envelopes from one CID to another CID." << std::endl;
-        std::cerr << "Usage:   " << argv[0] << " --cid-from=<source CID> --cid-to=<destination>" << std::endl;
+        std::cerr << "Usage:   " << argv[0] << " --cid-from=<source CID> --cid-to=<destination> [--keep=<list of messageIDs to keep>] [--drop=<list of messageIDs to drop>]" << std::endl;
         std::cerr << "         --cid-from:  relay Envelopes originating from this CID" << std::endl;
         std::cerr << "         --cid-to:    relay Envelopes to this CID (must be different from source)" << std::endl;
+        std::cerr << "         --keep:      list of Envelope IDs to keep; example: --keep=19,25" << std::endl;
+        std::cerr << "         --drop:      list of Envelope IDs to drop; example: --drop=17,35" << std::endl;
+        std::cerr << "                      --keep and --drop must not be used simultaneously." << std::endl;
+        std::cerr << "                      Not matching Envelope IDs with --keep are dropped." << std::endl;
+        std::cerr << "                      Not matching Envelope IDs with --drop are kept." << std::endl;
         std::cerr << "Example: " << argv[0] << " --cid-from=111 --cid-to=112" << std::endl;
         retCode = 1;
     } else {
+        std::unordered_map<int32_t, bool, cluon::UseUInt32ValueAsHashKey> mapOfEnvelopesToKeep{};
+        {
+            std::string tmp{commandlineArguments["keep"]};
+            if (!tmp.empty()) {
+                tmp += ",";
+                auto entries = stringtoolbox::split(tmp, ',');
+                for (auto e : entries) {
+                    std::clog << argv[0] << " keeping " << e << std::endl;
+                    mapOfEnvelopesToKeep[std::stoi(e)] = true;
+                }
+            }
+        }
+        std::unordered_map<int32_t, bool, cluon::UseUInt32ValueAsHashKey> mapOfEnvelopesToDrop{};
+        {
+            std::string tmp{commandlineArguments["drop"]};
+            if (!tmp.empty()) {
+                tmp += ",";
+                auto entries = stringtoolbox::split(tmp, ',');
+                for (auto e : entries) {
+                    std::clog << argv[0] << " dropping " << e << std::endl;
+                    mapOfEnvelopesToDrop[std::stoi(e)] = true;
+                }
+            }
+        }
+
         cluon::UDPSender od4Destination{"225.0.0." + commandlineArguments["cid-to"], 12175};
 
         cluon::OD4Session od4Source(static_cast<uint16_t>(std::stoi(commandlineArguments["cid-from"])),
-            [&od4Destination](cluon::data::Envelope &&env){
-                od4Destination.send(cluon::serializeEnvelope(std::move(env)));
+            [&od4Destination, &mapOfEnvelopesToKeep, &mapOfEnvelopesToDrop](cluon::data::Envelope &&env){
+                if (0 < env.dataType()) {
+                    if ( (0 < mapOfEnvelopesToKeep.size()) && mapOfEnvelopesToKeep.count(env.dataType())) {
+                        od4Destination.send(cluon::serializeEnvelope(std::move(env)));
+                    }
+                    if ( (0 < mapOfEnvelopesToDrop.size()) && !mapOfEnvelopesToDrop.count(env.dataType())) {
+                        od4Destination.send(cluon::serializeEnvelope(std::move(env)));
+                    }
+                }
             }
         );
 

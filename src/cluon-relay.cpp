@@ -38,6 +38,7 @@ int32_t main(int32_t argc, char **argv) {
         std::cerr << "         --drop:          list of Envelope IDs to drop; example: --drop=17,35" << std::endl;
         std::cerr << "         --downsampling:  list of Envelope IDs to downsample; example: --downsample=12:2,31:10  keep every second of 12 and every tenth of 31" << std::endl;
         std::cerr << "                          --keep and --drop must not be used simultaneously." << std::endl;
+        std::cerr << "                          Neither specifying --keep, --drop, or --downsample will simply pass all Envelopes from --cid-from to --cid-to." << std::endl;
         std::cerr << "                          Not matching Envelope IDs with --keep are dropped." << std::endl;
         std::cerr << "                          Not matching Envelope IDs with --drop are kept." << std::endl;
         std::cerr << "                          An Envelope IDs with downsampling information supersedes --keep." << std::endl;
@@ -93,7 +94,10 @@ int32_t main(int32_t argc, char **argv) {
             [&od4Destination, &mapOfEnvelopesToKeep, &mapOfEnvelopesToDrop, &downsampling, &downsamplingCounter](cluon::data::Envelope &&env){
                 auto id{env.dataType()};
                 if (0 < id) {
-                    if ( (0 < downsampling.size()) && downsampling.count(env.dataType()) ) {
+                    if ( downsampling.empty() && mapOfEnvelopesToKeep.empty() && mapOfEnvelopesToDrop.empty() ) {
+                        od4Destination.send(cluon::serializeEnvelope(std::move(env)));
+                    }
+                    else if ( (0 < downsampling.size()) && downsampling.count(env.dataType()) ) {
                         downsamplingCounter[id] = downsamplingCounter[id] - 1;
                         if (downsamplingCounter[id] == 0) {
                             // Reset counter and forward Envelope.

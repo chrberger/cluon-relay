@@ -23,17 +23,15 @@
 
 int32_t main(int32_t argc, char **argv) {
     int32_t retCode{0};
-    auto commandlineArguments = cluon::getCommandlineArguments(argc, argv);
-    if (  (0 == commandlineArguments.count("cid-from"))
-       || (0 == commandlineArguments.count("cid-to"))
-       || ( (1 == commandlineArguments.count("cid-from")) && (1 == commandlineArguments.count("cid-to")) 
-          && (commandlineArguments["cid-from"] == commandlineArguments["cid-to"]) )
-       || ( (1 == commandlineArguments.count("keep")) && (1 == commandlineArguments.count("drop")) )
-       ) {
+
+    auto usage = [&argv, &retCode](){
         std::cerr << argv[0] << " relays Envelopes from one CID to another CID." << std::endl;
-        std::cerr << "Usage:   " << argv[0] << " --cid-from=<source CID> --cid-to=<destination> [--keep=<list of messageIDs to keep>] [--drop=<list of messageIDs to drop>] [--downsampling=<list of messageIDs to downsample>]" << std::endl;
-        std::cerr << "         --cid-from:  relay Envelopes originating from this CID" << std::endl;
-        std::cerr << "         --cid-to:    relay Envelopes to this CID (must be different from source)" << std::endl;
+        std::cerr << "Usage:   " << argv[0] << " --cid-from=<source CID> [--via-tcp=<port|ip:port>] --cid-to=<destination> [--keep=<list of messageIDs to keep>] [--drop=<list of messageIDs to drop>] [--downsampling=<list of messageIDs to downsample>]" << std::endl;
+        std::cerr << "         --cid-from:      relay Envelopes originating from this CID" << std::endl;
+        std::cerr << "         --cid-to:        relay Envelopes to this CID (must be different from source)" << std::endl;
+        std::cerr << "         --via-tcp:       relay Envelopes via a TCP connection; one needs two instances of " << argv[0] << ", where" << std::endl;
+        std::cerr << "                          the server (--cid-from) is using --via-tcp=Port (eg., --via-tcp=1234, port > 1023)," << std::endl;
+        std::cerr << "                          and the client (--cid-to) is using --via-tcp=IP:Port (eg., --via-tcp=a.b.c.d:1234)." << std::endl;
         std::cerr << "         --keep:          list of Envelope IDs to keep; example: --keep=19,25" << std::endl;
         std::cerr << "         --drop:          list of Envelope IDs to drop; example: --drop=17,35" << std::endl;
         std::cerr << "         --downsampling:  list of Envelope IDs to downsample; example: --downsample=12:2,31:10  keep every second of 12 and every tenth of 31" << std::endl;
@@ -42,8 +40,27 @@ int32_t main(int32_t argc, char **argv) {
         std::cerr << "                          Not matching Envelope IDs with --keep are dropped." << std::endl;
         std::cerr << "                          Not matching Envelope IDs with --drop are kept." << std::endl;
         std::cerr << "                          An Envelope IDs with downsampling information supersedes --keep." << std::endl;
-        std::cerr << "Example: " << argv[0] << " --cid-from=111 --cid-to=112 --keep=123" << std::endl;
+        std::cerr << "Examples: " << std::endl;
+        std::cerr << "UDP:          " << argv[0] << " --cid-from=111 --cid-to=112 --keep=123" << std::endl;
+        std::cerr << "TCP (server): " << argv[0] << " --cid-from=111 --via-tcp=1234 --keep=123" << std::endl;
+        std::cerr << "TCP (client): " << argv[0] << " --cid-to=112 --via-tcp=192.168.2.3:1234" << std::endl;
         retCode = 1;
+    };
+
+    auto commandlineArguments = cluon::getCommandlineArguments(argc, argv);
+    if ( ( (    (0 == commandlineArguments.count("cid-from"))
+             || (0 == commandlineArguments.count("cid-to")) )
+           && (0 == commandlineArguments.count("via-tcp"))
+         )
+       || ( (1 == commandlineArguments.count("via-tcp")) &&
+            (   (1 == commandlineArguments.count("cid-from"))
+             && (1 == commandlineArguments.count("cid-to")) )
+          )
+       || ( (1 == commandlineArguments.count("cid-from")) && (1 == commandlineArguments.count("cid-to")) 
+          && (commandlineArguments["cid-from"] == commandlineArguments["cid-to"]) )
+       || ( (1 == commandlineArguments.count("keep")) && (1 == commandlineArguments.count("drop")) )
+       ) {
+        usage();
     } else {
         std::unordered_map<int32_t, bool, cluon::UseUInt32ValueAsHashKey> mapOfEnvelopesToKeep{};
         {
@@ -88,38 +105,141 @@ int32_t main(int32_t argc, char **argv) {
             }
         }
 
-        cluon::UDPSender od4Destination{"225.0.0." + commandlineArguments["cid-to"], 12175};
+        const bool VIA_TCP{commandlineArguments.count("via-tcp") != 0};
+        if (VIA_TCP) {
+            const std::string TCP{commandlineArguments["via-tcp"]};
+            uint16_t port{0};
+            try {
+                port = std::stoi(TCP);
+            }
+            catch (...) {
+                port = 0;
+            }
+            auto connection = stringtoolbox::split(TCP, ':');
 
-        cluon::OD4Session od4Source(static_cast<uint16_t>(std::stoi(commandlineArguments["cid-from"])),
-            [&od4Destination, &mapOfEnvelopesToKeep, &mapOfEnvelopesToDrop, &downsampling, &downsamplingCounter](cluon::data::Envelope &&env){
-                auto id{env.dataType()};
-                if (0 < id) {
-                    if ( downsampling.empty() && mapOfEnvelopesToKeep.empty() && mapOfEnvelopesToDrop.empty() ) {
-                        od4Destination.send(cluon::serializeEnvelope(std::move(env)));
-                    }
-                    else if ( (0 < downsampling.size()) && downsampling.count(env.dataType()) ) {
-                        downsamplingCounter[id] = downsamplingCounter[id] - 1;
-                        if (downsamplingCounter[id] == 0) {
-                            // Reset counter and forward Envelope.
-                            downsamplingCounter[id] = downsampling[id];
-                            od4Destination.send(cluon::serializeEnvelope(std::move(env)));
-                        }
-                    }
-                    else {
-                        if ( (0 < mapOfEnvelopesToKeep.size()) && mapOfEnvelopesToKeep.count(id) ) {
-                            od4Destination.send(cluon::serializeEnvelope(std::move(env)));
-                        }
-                        if ( (0 < mapOfEnvelopesToDrop.size()) && !mapOfEnvelopesToDrop.count(id) ) {
-                            od4Destination.send(cluon::serializeEnvelope(std::move(env)));
+            const bool NOT_IS_CLIENT{(TCP.find(":") == std::string::npos) && (("1" == TCP) || (1024 > port))};
+            const bool NOT_IS_SERVER{(TCP.find(":") != std::string::npos) && (2 != connection.size())};
+            if ( NOT_IS_CLIENT || NOT_IS_SERVER ) {
+                usage();
+            }
+
+            const bool IS_CLIENT{!NOT_IS_SERVER && (2 == connection.size())};
+            const bool IS_SERVER{!NOT_IS_CLIENT && (1023 < port)};
+            if (IS_CLIENT && !IS_SERVER) {
+                try {
+                    port = std::stoi(connection[1]);
+
+                    cluon::TCPConnection c(connection[0], port);
+                    if (c.isRunning()) {
+                        cluon::UDPSender od4Destination{"225.0.0." + commandlineArguments["cid-to"], 12175};
+
+                        c.setOnNewData([&od4Destination](std::string &&d, std::chrono::system_clock::time_point && /*timestamp*/) {
+                            od4Destination.send(std::move(d));
+                        });
+
+                        using namespace std::literals::chrono_literals;
+                        while (c.isRunning()) {
+                            std::this_thread::sleep_for(1s);
                         }
                     }
                 }
+                catch (...) {
+                    port = 0;
+                }
             }
-        );
+            else if (!IS_CLIENT && IS_SERVER) {
+                std::vector<std::shared_ptr<cluon::TCPConnection>> connections;
 
-        using namespace std::literals::chrono_literals;
-        while (od4Source.isRunning()) {
-            std::this_thread::sleep_for(1s);
+                auto newConnectionHandler = [&argv, &connections](std::string &&from, std::shared_ptr<cluon::TCPConnection> conn) noexcept {
+                    std::cout << argv[0] << ": new connection from " << from << std::endl;
+                    conn->setOnNewData([](std::string &&/*d*/, std::chrono::system_clock::time_point && /*timestamp*/) {});
+                    conn->setOnConnectionLost([]() {});
+                    connections.push_back(conn);
+                };
+                cluon::TCPServer server(port, newConnectionHandler);
+
+                cluon::OD4Session od4Source(static_cast<uint16_t>(std::stoi(commandlineArguments["cid-from"])),
+                    [&connections, &mapOfEnvelopesToKeep, &mapOfEnvelopesToDrop, &downsampling, &downsamplingCounter](cluon::data::Envelope &&env){
+                        if (!connections.empty()) {
+                            auto id{env.dataType()};
+                            if (0 < id) {
+                                if ( downsampling.empty() && mapOfEnvelopesToKeep.empty() && mapOfEnvelopesToDrop.empty() ) {
+                                    for(auto c: connections) {
+                                        c->send(cluon::serializeEnvelope(std::move(env)));
+                                    }
+                                }
+                                else if ( (0 < downsampling.size()) && downsampling.count(env.dataType()) ) {
+                                    downsamplingCounter[id] = downsamplingCounter[id] - 1;
+                                    if (downsamplingCounter[id] == 0) {
+                                        // Reset counter and forward Envelope.
+                                        downsamplingCounter[id] = downsampling[id];
+                                        for(auto c: connections) {
+                                            c->send(cluon::serializeEnvelope(std::move(env)));
+                                        }
+                                    }
+                                }
+                                else {
+                                    if ( (0 < mapOfEnvelopesToKeep.size()) && mapOfEnvelopesToKeep.count(id) ) {
+                                        for(auto c: connections) {
+                                            c->send(cluon::serializeEnvelope(std::move(env)));
+                                        }
+                                    }
+                                    if ( (0 < mapOfEnvelopesToDrop.size()) && !mapOfEnvelopesToDrop.count(id) ) {
+                                        for(auto c: connections) {
+                                            c->send(cluon::serializeEnvelope(std::move(env)));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                );
+
+                using namespace std::literals::chrono_literals;
+                while (od4Source.isRunning()) {
+                    std::this_thread::sleep_for(1s);
+                }
+
+                connections.clear();
+            }
+            else {
+                retCode = 1;
+            }
+        }
+        else {
+            cluon::UDPSender od4Destination{"225.0.0." + commandlineArguments["cid-to"], 12175};
+
+            cluon::OD4Session od4Source(static_cast<uint16_t>(std::stoi(commandlineArguments["cid-from"])),
+                [&od4Destination, &mapOfEnvelopesToKeep, &mapOfEnvelopesToDrop, &downsampling, &downsamplingCounter](cluon::data::Envelope &&env){
+                    auto id{env.dataType()};
+                    if (0 < id) {
+                        if ( downsampling.empty() && mapOfEnvelopesToKeep.empty() && mapOfEnvelopesToDrop.empty() ) {
+                            od4Destination.send(cluon::serializeEnvelope(std::move(env)));
+                        }
+                        else if ( (0 < downsampling.size()) && downsampling.count(env.dataType()) ) {
+                            downsamplingCounter[id] = downsamplingCounter[id] - 1;
+                            if (downsamplingCounter[id] == 0) {
+                                // Reset counter and forward Envelope.
+                                downsamplingCounter[id] = downsampling[id];
+                                od4Destination.send(cluon::serializeEnvelope(std::move(env)));
+                            }
+                        }
+                        else {
+                            if ( (0 < mapOfEnvelopesToKeep.size()) && mapOfEnvelopesToKeep.count(id) ) {
+                                od4Destination.send(cluon::serializeEnvelope(std::move(env)));
+                            }
+                            if ( (0 < mapOfEnvelopesToDrop.size()) && !mapOfEnvelopesToDrop.count(id) ) {
+                                od4Destination.send(cluon::serializeEnvelope(std::move(env)));
+                            }
+                        }
+                    }
+                }
+            );
+
+            using namespace std::literals::chrono_literals;
+            while (od4Source.isRunning()) {
+                std::this_thread::sleep_for(1s);
+            }
         }
     }
     return retCode;

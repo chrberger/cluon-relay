@@ -26,13 +26,14 @@ int32_t main(int32_t argc, char **argv) {
 
     auto usage = [&argv, &retCode](){
         std::cerr << argv[0] << " relays Envelopes from one CID to another CID." << std::endl;
-        std::cerr << "Usage:   " << argv[0] << " --cid-from=<source CID> [--via-tcp=<port|ip:port> [--mtu=<MTU>]] --cid-to=<destination> [--keep=<list of messageIDs to keep>] [--drop=<list of messageIDs to drop>] [--downsampling=<list of messageIDs to downsample>]" << std::endl;
+        std::cerr << "Usage:   " << argv[0] << " --cid-from=<source CID> [--via-tcp=<port|ip:port> [--mtu=<MTU>] [--timeout=<Timeout>]] --cid-to=<destination> [--keep=<list of messageIDs to keep>] [--drop=<list of messageIDs to drop>] [--downsampling=<list of messageIDs to downsample>]" << std::endl;
         std::cerr << "         --cid-from:      relay Envelopes originating from this CID" << std::endl;
         std::cerr << "         --cid-to:        relay Envelopes to this CID (must be different from source)" << std::endl;
         std::cerr << "         --via-tcp:       relay Envelopes via a TCP connection; one needs two instances of " << argv[0] << ", where" << std::endl;
         std::cerr << "                          the server (--cid-from) is using --via-tcp=Port (eg., --via-tcp=1234, port > 1023)," << std::endl;
         std::cerr << "                          and the client (--cid-to) is using --via-tcp=IP:Port (eg., --via-tcp=a.b.c.d:1234)." << std::endl;
         std::cerr << "         --mtu:           fill a TCP packet up to this amount instead of sending one for each Envelope; default: 1 (to send for every Envelope)" << std::endl;
+        std::cerr << "         --timeout:       send TCP packet after this timeout in ms even if it is not fully filled; default: 1000ms" << std::endl;
         std::cerr << "         --keep:          list of Envelope IDs to keep; example: --keep=19,25" << std::endl;
         std::cerr << "         --drop:          list of Envelope IDs to drop; example: --drop=17,35" << std::endl;
         std::cerr << "         --downsampling:  list of Envelope IDs to downsample; example: --downsample=12:2,31:10  keep every second of 12 and every tenth of 31" << std::endl;
@@ -110,6 +111,8 @@ int32_t main(int32_t argc, char **argv) {
         if (VIA_TCP) {
             const std::string TCP{commandlineArguments["via-tcp"]};
             const uint32_t MTU{(0 < commandlineArguments.count("mtu")) ? static_cast<uint32_t>(std::stoi(commandlineArguments["mtu"])) : 1};
+            uint32_t TIMEOUT{(0 < commandlineArguments.count("timeout")) ? static_cast<uint32_t>(std::stoi(commandlineArguments["timeout"])) : 1000};
+            TIMEOUT = (0 == TIMEOUT) ? 1 : TIMEOUT;
             uint16_t port{0};
             try {
                 port = std::stoi(TCP);
@@ -160,13 +163,15 @@ int32_t main(int32_t argc, char **argv) {
                 };
                 cluon::TCPServer server(port, newConnectionHandler);
 
+                std::mutex bufferForEnvelopesMutex;
                 std::vector<char> bufferForEnvelopes;
                 bufferForEnvelopes.reserve(65535);
                 uint16_t indexBufferForEnvelopes{0};
-                auto bufferOrSendEnvelope = [MTU, &connections, &bufferForEnvelopes, &indexBufferForEnvelopes](cluon::data::Envelope &&env){
+                auto bufferOrSendEnvelope = [MTU, &connections, &bufferForEnvelopesMutex, &bufferForEnvelopes, &indexBufferForEnvelopes](cluon::data::Envelope &&env){
                     const std::string serializedEnvelope{cluon::serializeEnvelope(std::move(env))};
                     const auto LENGTH{serializedEnvelope.size()};
 
+                    std::lock_guard<std::mutex> lck(bufferForEnvelopesMutex);
                     // Do we have to clear the buffer first?
                     if ( (0 < indexBufferForEnvelopes) && (MTU < (indexBufferForEnvelopes + LENGTH)) ) {
                         for(auto c: connections) {
@@ -217,10 +222,18 @@ std::cerr << "Sending filled buffer." << std::endl;
                     }
                 );
 
-                using namespace std::literals::chrono_literals;
-                while (od4Source.isRunning()) {
-                    std::this_thread::sleep_for(1s);
-                }
+                const float FREQ{1000.0f/TIMEOUT};
+                od4Source.timeTrigger(FREQ, [&od4Source, MTU, &connections, &bufferForEnvelopesMutex, &bufferForEnvelopes, &indexBufferForEnvelopes](){
+                    std::lock_guard<std::mutex> lck(bufferForEnvelopesMutex);
+                    if (0 < indexBufferForEnvelopes) {
+                        for(auto c: connections) {
+                            c->send(std::string(bufferForEnvelopes.data(), indexBufferForEnvelopes));
+                        }
+                        indexBufferForEnvelopes = 0;
+std::cerr << "timeout: Sending existing buffer." << std::endl;
+                    }
+                    return od4Source.isRunning();
+                });
 
                 connections.clear();
             }

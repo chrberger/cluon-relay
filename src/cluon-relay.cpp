@@ -139,7 +139,14 @@ int32_t main(int32_t argc, char **argv) {
                         cluon::UDPSender od4Destination{"225.0.0." + commandlineArguments["cid-to"], 12175};
 
                         c.setOnNewData([&od4Destination](std::string &&d, std::chrono::system_clock::time_point && /*timestamp*/) {
-                            od4Destination.send(std::move(d));
+                            // Unpack multiple Envelopes.
+                            std::stringstream sstr(std::move(d));
+                            while (sstr.good()) {
+                                auto retVal = cluon::extractEnvelope(sstr);
+                                if (retVal.first) {
+                                    od4Destination.send(cluon::serializeEnvelope(std::move(retVal.second)));
+                                }
+                            }
                         });
 
                         using namespace std::literals::chrono_literals;
@@ -178,7 +185,6 @@ int32_t main(int32_t argc, char **argv) {
                             c->send(std::string(bufferForEnvelopes.data(), indexBufferForEnvelopes));
                         }
                         indexBufferForEnvelopes = 0;
-std::cerr << "Sending existing buffer." << std::endl;
                     }
 
                     std::memcpy(bufferForEnvelopes.data() + indexBufferForEnvelopes, serializedEnvelope.data(), LENGTH);
@@ -189,7 +195,6 @@ std::cerr << "Sending existing buffer." << std::endl;
                             c->send(std::string(bufferForEnvelopes.data(), indexBufferForEnvelopes));
                         }
                         indexBufferForEnvelopes = 0;
-std::cerr << "Sending filled buffer." << std::endl;
                     }
                 };
 
@@ -230,7 +235,6 @@ std::cerr << "Sending filled buffer." << std::endl;
                             c->send(std::string(bufferForEnvelopes.data(), indexBufferForEnvelopes));
                         }
                         indexBufferForEnvelopes = 0;
-std::cerr << "timeout: Sending existing buffer." << std::endl;
                     }
                     return od4Source.isRunning();
                 });

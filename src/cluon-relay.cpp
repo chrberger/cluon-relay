@@ -239,6 +239,17 @@ int32_t main(int32_t argc, char **argv) {
                     return od4Source.isRunning();
                 });
 
+                // Clear buffer for the last time.
+                {
+                    std::lock_guard<std::mutex> lck(bufferForEnvelopesMutex);
+                    if (0 < indexBufferForEnvelopes) {
+                        for(auto c: connections) {
+                            c->send(std::string(bufferForEnvelopes.data(), indexBufferForEnvelopes));
+                        }
+                        indexBufferForEnvelopes = 0;
+                    }
+                }
+
                 connections.clear();
             }
             else {

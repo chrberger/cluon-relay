@@ -26,12 +26,13 @@ int32_t main(int32_t argc, char **argv) {
 
     auto usage = [&argv, &retCode](){
         std::cerr << argv[0] << " relays Envelopes from one CID to another CID." << std::endl;
-        std::cerr << "Usage:   " << argv[0] << " --cid-from=<source CID> [--via-tcp=<port|ip:port>] --cid-to=<destination> [--keep=<list of messageIDs to keep>] [--drop=<list of messageIDs to drop>] [--downsampling=<list of messageIDs to downsample>]" << std::endl;
+        std::cerr << "Usage:   " << argv[0] << " --cid-from=<source CID> [--via-tcp=<port|ip:port> [--mtu=<MTU>]] --cid-to=<destination> [--keep=<list of messageIDs to keep>] [--drop=<list of messageIDs to drop>] [--downsampling=<list of messageIDs to downsample>]" << std::endl;
         std::cerr << "         --cid-from:      relay Envelopes originating from this CID" << std::endl;
         std::cerr << "         --cid-to:        relay Envelopes to this CID (must be different from source)" << std::endl;
         std::cerr << "         --via-tcp:       relay Envelopes via a TCP connection; one needs two instances of " << argv[0] << ", where" << std::endl;
         std::cerr << "                          the server (--cid-from) is using --via-tcp=Port (eg., --via-tcp=1234, port > 1023)," << std::endl;
         std::cerr << "                          and the client (--cid-to) is using --via-tcp=IP:Port (eg., --via-tcp=a.b.c.d:1234)." << std::endl;
+        std::cerr << "         --mtu:           fill a TCP packet up to this amount instead of sending one for each Envelope; default: 1 (to send for every Envelope)" << std::endl;
         std::cerr << "         --keep:          list of Envelope IDs to keep; example: --keep=19,25" << std::endl;
         std::cerr << "         --drop:          list of Envelope IDs to drop; example: --drop=17,35" << std::endl;
         std::cerr << "         --downsampling:  list of Envelope IDs to downsample; example: --downsample=12:2,31:10  keep every second of 12 and every tenth of 31" << std::endl;
@@ -108,6 +109,7 @@ int32_t main(int32_t argc, char **argv) {
         const bool VIA_TCP{commandlineArguments.count("via-tcp") != 0};
         if (VIA_TCP) {
             const std::string TCP{commandlineArguments["via-tcp"]};
+            const uint32_t MTU{(0 < commandlineArguments.count("mtu")) ? static_cast<uint32_t>(std::stoi(commandlineArguments["mtu"])) : 1};
             uint16_t port{0};
             try {
                 port = std::stoi(TCP);
@@ -158,36 +160,56 @@ int32_t main(int32_t argc, char **argv) {
                 };
                 cluon::TCPServer server(port, newConnectionHandler);
 
+                std::vector<char> bufferForEnvelopes;
+                bufferForEnvelopes.reserve(65535);
+                uint16_t indexBufferForEnvelopes{0};
+                auto bufferOrSendEnvelope = [MTU, &connections, &bufferForEnvelopes, &indexBufferForEnvelopes](cluon::data::Envelope &&env){
+                    const std::string serializedEnvelope{cluon::serializeEnvelope(std::move(env))};
+                    const auto LENGTH{serializedEnvelope.size()};
+
+                    // Do we have to clear the buffer first?
+                    if ( (0 < indexBufferForEnvelopes) && (MTU < (indexBufferForEnvelopes + LENGTH)) ) {
+                        for(auto c: connections) {
+                            c->send(std::string(bufferForEnvelopes.data(), indexBufferForEnvelopes));
+                        }
+                        indexBufferForEnvelopes = 0;
+std::cerr << "Sending existing buffer." << std::endl;
+                    }
+
+                    std::memcpy(bufferForEnvelopes.data() + indexBufferForEnvelopes, serializedEnvelope.data(), LENGTH);
+                    indexBufferForEnvelopes += LENGTH;
+                    // Do we have to clear the buffer again?
+                    if (MTU < indexBufferForEnvelopes) {
+                        for(auto c: connections) {
+                            c->send(std::string(bufferForEnvelopes.data(), indexBufferForEnvelopes));
+                        }
+                        indexBufferForEnvelopes = 0;
+std::cerr << "Sending filled buffer." << std::endl;
+                    }
+                };
+
                 cluon::OD4Session od4Source(static_cast<uint16_t>(std::stoi(commandlineArguments["cid-from"])),
-                    [&connections, &mapOfEnvelopesToKeep, &mapOfEnvelopesToDrop, &downsampling, &downsamplingCounter](cluon::data::Envelope &&env){
+                    [&connections, &bufferOrSendEnvelope, &mapOfEnvelopesToKeep, &mapOfEnvelopesToDrop, &downsampling, &downsamplingCounter](cluon::data::Envelope &&env){
                         if (!connections.empty()) {
                             auto id{env.dataType()};
                             if (0 < id) {
                                 if ( downsampling.empty() && mapOfEnvelopesToKeep.empty() && mapOfEnvelopesToDrop.empty() ) {
-                                    for(auto c: connections) {
-                                        c->send(cluon::serializeEnvelope(std::move(env)));
-                                    }
+                                    bufferOrSendEnvelope(std::move(env));
                                 }
                                 else if ( (0 < downsampling.size()) && downsampling.count(env.dataType()) ) {
                                     downsamplingCounter[id] = downsamplingCounter[id] - 1;
                                     if (downsamplingCounter[id] == 0) {
                                         // Reset counter and forward Envelope.
                                         downsamplingCounter[id] = downsampling[id];
-                                        for(auto c: connections) {
-                                            c->send(cluon::serializeEnvelope(std::move(env)));
-                                        }
+                                        bufferOrSendEnvelope(std::move(env));
                                     }
                                 }
                                 else {
                                     if ( (0 < mapOfEnvelopesToKeep.size()) && mapOfEnvelopesToKeep.count(id) ) {
-                                        for(auto c: connections) {
-                                            c->send(cluon::serializeEnvelope(std::move(env)));
-                                        }
+                                        bufferOrSendEnvelope(std::move(env));
                                     }
                                     if ( (0 < mapOfEnvelopesToDrop.size()) && !mapOfEnvelopesToDrop.count(id) ) {
-                                        for(auto c: connections) {
-                                            c->send(cluon::serializeEnvelope(std::move(env)));
-                                        }
+                                        bufferOrSendEnvelope(std::move(env));
                                     }
                                 }
                             }

@@ -14,7 +14,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 # Part to build cluon-relay.
-FROM alpine:3.7 as builder
+FROM alpine:3.12 as builder
 MAINTAINER Christian Berger "christian.berger@gu.se"
 RUN echo http://dl-4.alpinelinux.org/alpine/v3.8/main > /etc/apk/repositories && \
     echo http://dl-4.alpinelinux.org/alpine/v3.8/community >> /etc/apk/repositories && \
@@ -22,7 +22,8 @@ RUN echo http://dl-4.alpinelinux.org/alpine/v3.8/main > /etc/apk/repositories &&
     apk --no-cache add \
         cmake \
         g++ \
-        make
+        make \
+        linux-headers
 ADD . /opt/sources
 WORKDIR /opt/sources
 RUN mkdir build && \
@@ -31,7 +32,7 @@ RUN mkdir build && \
     make && make install
 
 # Part to deploy cluon-relay.
-FROM alpine:3.7
+FROM alpine:3.12
 MAINTAINER Christian Berger "christian.berger@gu.se"
 
 WORKDIR /usr/bin

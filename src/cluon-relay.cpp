@@ -292,9 +292,6 @@ int32_t main(int32_t argc, char **argv) {
               cluon::OD4Session od4Source(static_cast<uint16_t>(std::stoi(commandlineArguments["cid-from"])),
                   [&c, &bufferOrSendEnvelope, &mapOfEnvelopesToKeep, &mapOfEnvelopesToDrop, &downsampling, &downsamplingCounter](cluon::data::Envelope &&env){
                     auto id{env.dataType()};
-
-                    puts("A");
-
                     if (0 < id) {
                       if ( downsampling.empty() && mapOfEnvelopesToKeep.empty() && mapOfEnvelopesToDrop.empty() ) {
                         bufferOrSendEnvelope(std::move(env));
@@ -320,7 +317,6 @@ int32_t main(int32_t argc, char **argv) {
 
               const float FREQ{1000.0f/TIMEOUT};
               od4Source.timeTrigger(FREQ, [&od4Source, MTU, &c, &bufferForEnvelopesMutex, &bufferForEnvelopes, &indexBufferForEnvelopes](){
-                puts("B");
                 std::lock_guard<std::mutex> lck(bufferForEnvelopesMutex);
                 if (0 < indexBufferForEnvelopes) {
                   c.send(std::string(bufferForEnvelopes.data(), indexBufferForEnvelopes));

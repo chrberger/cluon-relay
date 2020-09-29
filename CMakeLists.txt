@@ -19,7 +19,7 @@ project(cluon-relay)
 
 ################################################################################
 # Defining the relevant version of libcluon.
-set(CLUON_COMPLETE cluon-complete-v0.0.120.hpp)
+set(CLUON_COMPLETE cluon-complete-v0.0.136.hpp)
 
 ################################################################################
 # Set the search path for .cmake files.

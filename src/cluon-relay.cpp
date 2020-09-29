@@ -263,73 +263,79 @@ int32_t main(int32_t argc, char **argv) {
             port = std::stoi(connection[1]);
 
             cluon::TCPConnection c(connection[0], port);
+            if (c.isRunning()) {
 
-            std::mutex bufferForEnvelopesMutex;
-            std::vector<char> bufferForEnvelopes;
-            bufferForEnvelopes.reserve(65535);
-            uint16_t indexBufferForEnvelopes{0};
-            auto bufferOrSendEnvelope = [MTU, &c, &bufferForEnvelopesMutex, &bufferForEnvelopes, &indexBufferForEnvelopes](cluon::data::Envelope &&env){
-              const std::string serializedEnvelope{cluon::serializeEnvelope(std::move(env))};
-              const auto LENGTH{serializedEnvelope.size()};
+              std::mutex bufferForEnvelopesMutex;
+              std::vector<char> bufferForEnvelopes;
+              bufferForEnvelopes.reserve(65535);
+              uint16_t indexBufferForEnvelopes{0};
+              auto bufferOrSendEnvelope = [MTU, &c, &bufferForEnvelopesMutex, &bufferForEnvelopes, &indexBufferForEnvelopes](cluon::data::Envelope &&env){
+                const std::string serializedEnvelope{cluon::serializeEnvelope(std::move(env))};
+                const auto LENGTH{serializedEnvelope.size()};
 
-              std::lock_guard<std::mutex> lck(bufferForEnvelopesMutex);
-              // Do we have to clear the buffer first?
-              if ( (0 < indexBufferForEnvelopes) && (MTU < (indexBufferForEnvelopes + LENGTH)) ) {
-                c.send(std::string(bufferForEnvelopes.data(), indexBufferForEnvelopes));
-                indexBufferForEnvelopes = 0;
-              }
+                std::lock_guard<std::mutex> lck(bufferForEnvelopesMutex);
+                // Do we have to clear the buffer first?
+                if ( (0 < indexBufferForEnvelopes) && (MTU < (indexBufferForEnvelopes + LENGTH)) ) {
+                  c.send(std::string(bufferForEnvelopes.data(), indexBufferForEnvelopes));
+                  indexBufferForEnvelopes = 0;
+                }
 
-              std::memcpy(bufferForEnvelopes.data() + indexBufferForEnvelopes, serializedEnvelope.data(), LENGTH);
-              indexBufferForEnvelopes += LENGTH;
-              // Do we have to clear the buffer again?
-              if (MTU < indexBufferForEnvelopes) {
-                c.send(std::string(bufferForEnvelopes.data(), indexBufferForEnvelopes));
-                indexBufferForEnvelopes = 0;
-              }
-            };
+                std::memcpy(bufferForEnvelopes.data() + indexBufferForEnvelopes, serializedEnvelope.data(), LENGTH);
+                indexBufferForEnvelopes += LENGTH;
+                // Do we have to clear the buffer again?
+                if (MTU < indexBufferForEnvelopes) {
+                  c.send(std::string(bufferForEnvelopes.data(), indexBufferForEnvelopes));
+                  indexBufferForEnvelopes = 0;
+                }
+              };
 
-            cluon::OD4Session od4Source(static_cast<uint16_t>(std::stoi(commandlineArguments["cid-from"])),
-                [&c, &bufferOrSendEnvelope, &mapOfEnvelopesToKeep, &mapOfEnvelopesToDrop, &downsampling, &downsamplingCounter](cluon::data::Envelope &&env){
-                  auto id{env.dataType()};
-                  if (0 < id) {
-                    if ( downsampling.empty() && mapOfEnvelopesToKeep.empty() && mapOfEnvelopesToDrop.empty() ) {
-                      bufferOrSendEnvelope(std::move(env));
-                    }
-                    else if ( (0 < downsampling.size()) && downsampling.count(env.dataType()) ) {
-                      downsamplingCounter[id] = downsamplingCounter[id] - 1;
-                      if (downsamplingCounter[id] == 0) {
-                        // Reset counter and forward Envelope.
-                        downsamplingCounter[id] = downsampling[id];
+              cluon::OD4Session od4Source(static_cast<uint16_t>(std::stoi(commandlineArguments["cid-from"])),
+                  [&c, &bufferOrSendEnvelope, &mapOfEnvelopesToKeep, &mapOfEnvelopesToDrop, &downsampling, &downsamplingCounter](cluon::data::Envelope &&env){
+                    auto id{env.dataType()};
+
+                    puts("A");
+
+                    if (0 < id) {
+                      if ( downsampling.empty() && mapOfEnvelopesToKeep.empty() && mapOfEnvelopesToDrop.empty() ) {
                         bufferOrSendEnvelope(std::move(env));
                       }
-                    }
-                    else {
-                      if ( (0 < mapOfEnvelopesToKeep.size()) && mapOfEnvelopesToKeep.count(id) ) {
-                        bufferOrSendEnvelope(std::move(env));
+                      else if ( (0 < downsampling.size()) && downsampling.count(env.dataType()) ) {
+                        downsamplingCounter[id] = downsamplingCounter[id] - 1;
+                        if (downsamplingCounter[id] == 0) {
+                          // Reset counter and forward Envelope.
+                          downsamplingCounter[id] = downsampling[id];
+                          bufferOrSendEnvelope(std::move(env));
+                        }
                       }
-                      if ( (0 < mapOfEnvelopesToDrop.size()) && !mapOfEnvelopesToDrop.count(id) ) {
-                        bufferOrSendEnvelope(std::move(env));
+                      else {
+                        if ( (0 < mapOfEnvelopesToKeep.size()) && mapOfEnvelopesToKeep.count(id) ) {
+                          bufferOrSendEnvelope(std::move(env));
+                        }
+                        if ( (0 < mapOfEnvelopesToDrop.size()) && !mapOfEnvelopesToDrop.count(id) ) {
+                          bufferOrSendEnvelope(std::move(env));
+                        }
                       }
                     }
-                  }
-                });
+                  });
 
-            const float FREQ{1000.0f/TIMEOUT};
-            od4Source.timeTrigger(FREQ, [&od4Source, MTU, &c, &bufferForEnvelopesMutex, &bufferForEnvelopes, &indexBufferForEnvelopes](){
-              std::lock_guard<std::mutex> lck(bufferForEnvelopesMutex);
-              if (0 < indexBufferForEnvelopes) {
-                c.send(std::string(bufferForEnvelopes.data(), indexBufferForEnvelopes));
-                indexBufferForEnvelopes = 0;
-              }
-              return od4Source.isRunning();
-            });
+              const float FREQ{1000.0f/TIMEOUT};
+              od4Source.timeTrigger(FREQ, [&od4Source, MTU, &c, &bufferForEnvelopesMutex, &bufferForEnvelopes, &indexBufferForEnvelopes](){
+                puts("B");
+                std::lock_guard<std::mutex> lck(bufferForEnvelopesMutex);
+                if (0 < indexBufferForEnvelopes) {
+                  c.send(std::string(bufferForEnvelopes.data(), indexBufferForEnvelopes));
+                  indexBufferForEnvelopes = 0;
+                }
+                return od4Source.isRunning();
+              });
 
-            // Clear buffer for the last time.
-            {
-              std::lock_guard<std::mutex> lck(bufferForEnvelopesMutex);
-              if (0 < indexBufferForEnvelopes) {
-                c.send(std::string(bufferForEnvelopes.data(), indexBufferForEnvelopes));
-                indexBufferForEnvelopes = 0;
+              // Clear buffer for the last time.
+              {
+                std::lock_guard<std::mutex> lck(bufferForEnvelopesMutex);
+                if (0 < indexBufferForEnvelopes) {
+                  c.send(std::string(bufferForEnvelopes.data(), indexBufferForEnvelopes));
+                  indexBufferForEnvelopes = 0;
+                }
               }
             }
           }
@@ -339,8 +345,9 @@ int32_t main(int32_t argc, char **argv) {
         }
         else if (!IS_CLIENT && IS_SERVER) {
           cluon::UDPSender od4Destination{"225.0.0." + commandlineArguments["cid-to"], 12175};
+          std::vector<std::shared_ptr<cluon::TCPConnection>> connections;
 
-          auto newConnectionHandler = [&argv, &od4Destination](std::string &&from, std::shared_ptr<cluon::TCPConnection> conn) noexcept {
+          auto newConnectionHandler = [&argv, &connections, &od4Destination](std::string &&from, std::shared_ptr<cluon::TCPConnection> conn) noexcept {
             std::cout << argv[0] << ": new connection from " << from << std::endl;
             conn->setOnNewData([&od4Destination](std::string &&d, std::chrono::system_clock::time_point && /*timestamp*/) {
               // Unpack multiple Envelopes.
@@ -353,6 +360,7 @@ int32_t main(int32_t argc, char **argv) {
               }
             });
             conn->setOnConnectionLost([]() {});
+            connections.push_back(conn);
           };
 
           cluon::TCPServer server(port, newConnectionHandler);
@@ -362,6 +370,7 @@ int32_t main(int32_t argc, char **argv) {
           while (server.isRunning()) {
             std::this_thread::sleep_for(1s);
           }
+          connections.clear();
         }
         else {
           retCode = 1;

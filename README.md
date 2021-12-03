@@ -31,7 +31,7 @@ CID `109` to CID `111`:
 version: '2' # Must be present exactly once at the beginning of the docker-compose.yml file
 services:    # Must be present exactly once at the beginning of the docker-compose.yml file
     relay-envelopes:
-        image: chrberger/cluon-relay-multi:v0.0.2
+        image: ghcr.io/chrberger/cluon-relay:latest
         restart: always
         network_mode: "host"
         command: "--cid-from=109 --cid-to=111 --keep=12,13"
@@ -39,7 +39,7 @@ services:    # Must be present exactly once at the beginning of the docker-compo
 
 Command for commandline to display the resulting image after operations:
 ```
-docker run --rm -ti --init --net=host chrberger/cluon-relay-multi:v0.0.2 --cid-from=109 --cid-to=111 --keep=12,13
+docker run --rm -ti --init --net=host ghcr.io/chrberger/cluon-relay:latest --cid-from=109 --cid-to=111 --keep=12,13
 ```
 
 The parameters to the application are:

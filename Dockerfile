@@ -16,8 +16,7 @@
 # Part to build cluon-relay.
 FROM alpine:3.15 as builder
 MAINTAINER Christian Berger "christian.berger@gu.se"
-RUN
-    apk update && \
+RUN apk update && \
     apk --no-cache add \
         cmake \
         g++ \

@@ -3,8 +3,7 @@
 This repository provides source code for a microservice to relay Envelopes
 from one OD4Session to another OD4Session.
 
-[![License: GPLv3](https://img.shields.io/badge/license-GPL--3-blue.svg
-)](https://www.gnu.org/licenses/gpl-3.0.txt)
+[![License: GPLv3](https://img.shields.io/badge/license-GPL--3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0.txt) ![build](https://github.com/chrberger/cluon-relay/actions/workflows/build-docker-image.yml/badge.svg) ![release](https://github.com/chrberger/cluon-relay/actions/workflows/release.yml/badge.svg)
 
 
 ## Table of Contents
